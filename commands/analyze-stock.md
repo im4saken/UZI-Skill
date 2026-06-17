@@ -13,6 +13,8 @@ argument-hint: "[股票名称或代码，例如 华工科技 / 002273 / AAPL / 0
 - 在 `stage1()` 真正解析出 `0_basic.data.name` 之前，不要把 ticker 口头扩写成具体公司名
 - 所有 `from run_real_test import ...` 的调用，必须先 `cd skills/deep-analysis/scripts`
 - 如果当前只知道 ticker，先说“开始分析 {ticker}，公司名以 stage1 返回结果为准”
+- `raw_data.json / dimensions.json / panel.json` 只能由脚本生成，禁止 agent 手工写或覆盖
+- 如果 `yfinance` 或其他核心依赖缺失，必须直接报告并停在修环境/重跑 `stage1()`，不能用 web 搜索结果伪造主缓存
 
 ### 第一段 · 数据采集 + 骨架分（脚本完成）
 

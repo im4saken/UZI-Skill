@@ -409,6 +409,41 @@ v2.7 时这是软要求（agent 可能跳过）。v2.9 起是硬编码 block —
 质量靠 agent 自查。
 </HARD-GATE>
 
+### ⛔ HARD-GATE-CANONICAL-ARTIFACTS · 禁止手工改写主缓存（v3.9.1）
+
+<HARD-GATE>
+`raw_data.json` / `dimensions.json` / `panel.json` 是**脚本主产物**，不是 agent 可随意改写的草稿。
+
+**你只能手工写这两类文件**：
+1. `.cache/{ticker}/agent_outputs/*.json`
+2. `.cache/{ticker}/agent_analysis.json`
+
+**你绝不能手工写/覆盖这些主文件**：
+1. `.cache/{ticker}/raw_data.json`
+2. `.cache/{ticker}/dimensions.json`
+3. `.cache/{ticker}/panel.json`
+4. 任何写到用户 home 目录或其他旁路位置的假缓存，例如 `/Users/.../.cache/{ticker}/raw_data.json`
+
+尤其当出现以下场景时：
+- `yfinance` 未安装
+- 美股/港股核心 fetcher 缺依赖
+- stage1 覆盖率很低
+- 某些核心维度抓取失败
+
+**正确动作**：
+- 先如实报告：缺的是哪类依赖/哪几个核心维度
+- 提示用户修环境或安装依赖后重跑 `stage1()`
+- 如需继续做定性补充，只能补 `agent_outputs/*` 或 `agent_analysis.json`
+
+**错误动作**：
+- ❌ 用 web 搜索结果手工拼一个 `raw_data.json`
+- ❌ 把 ticker 擅自映射成另一个公司后写进 `0_basic.name`
+- ❌ 先写 `/Users/andy/.cache/...` 再 copy 回脚本 cache
+- ❌ 用 agent 伪造 `coverage_pct=85`、`market_cap`、`financials` 等主数据字段
+
+一句话：**主缓存只能由脚本生成；agent 只能写覆盖层，不能写底稿。**
+</HARD-GATE>
+
 ### ⛔ HARD-GATE-DATAGAPS · 数据缺口 agent 必须接管（v2.3）
 
 <HARD-GATE>
