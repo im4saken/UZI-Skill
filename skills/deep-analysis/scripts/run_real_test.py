@@ -25,6 +25,9 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
+# 完整 standalone 报告通常远大于 400KB；低于该阈值基本可视为只生成了骨架或大段缺失。
+MIN_STANDALONE_REPORT_BYTES = 400 * 1024
+
 from lib.cache import write_task_output  # noqa: E402
 from lib.investor_db import INVESTORS  # noqa: E402
 from lib.investor_personas import get_comment as _persona_comment  # noqa: E402
@@ -795,8 +798,11 @@ def stage2(ticker: str) -> str:
         print(f"  ⚠️ 战报跳过: {e}")
 
     standalone_path = Path(standalone).resolve()
-    assert standalone_path.exists() and standalone_path.stat().st_size > 10000, \
-        f"Standalone file missing or too small: {standalone_path}"
+    assert standalone_path.exists(), f"Standalone file missing: {standalone_path}"
+    assert standalone_path.stat().st_size >= MIN_STANDALONE_REPORT_BYTES, (
+        f"Standalone file too small: {standalone_path} "
+        f"({standalone_path.stat().st_size} bytes < {MIN_STANDALONE_REPORT_BYTES})"
+    )
 
     print(f"\n✅ Stage 2 完成!")
     print(f"   报告: {standalone_path}")

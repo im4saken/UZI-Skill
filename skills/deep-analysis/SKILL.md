@@ -954,6 +954,12 @@ python scripts/render_war_report.py {ticker}  # 战报 PNG
 - 杀猪盘等级显示
 - 文件大小 > 400 KB（低于说明有大段缺失）
 
+**停机规则（防止 agent 卡死反复审查 HTML）**：
+- 一旦 `stage2()` 成功返回且 `full-report-standalone.html` 大于 400 KB，视为装配完成
+- 此后**不要反复读取/复查 HTML 内容**
+- 最终对用户的总结应基于 `synthesis.json`、`one-liner.txt` 和产物路径，而不是继续逐段审 HTML
+- 如果文件小于 400 KB，直接视为失败，修复后重跑；不要进入“反复看看 report content”循环
+
 ---
 
 ## 🖥️ Codex / 远程环境适配
