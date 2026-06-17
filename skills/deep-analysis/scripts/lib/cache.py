@@ -30,7 +30,14 @@ TTL_STATIC      = 7 * 24 * 60 * 60   # 7 days — industry classification
 # Default TTL when caller doesn't specify
 CACHE_TTL_SECONDS = TTL_INTRADAY
 
-CACHE_ROOT = Path(".cache")
+# Cache must live at skill-root/.cache rather than cwd/.cache.
+# Hermes runs Python from `skills/deep-analysis/scripts/`, while later file reads
+# often target `skills/deep-analysis/.cache/...`. Using an absolute skill-root path
+# keeps stage1/stage2 and downstream readers aligned.
+_THIS_FILE = Path(__file__).resolve()
+SKILL_ROOT = _THIS_FILE.parents[2]
+LEGACY_CACHE_ROOT = Path(".cache")
+CACHE_ROOT = Path(os.environ.get("UZI_CACHE_ROOT", str(SKILL_ROOT / ".cache"))).resolve()
 NO_CACHE = os.environ.get("STOCK_NO_CACHE") == "1"
 
 
@@ -119,16 +126,22 @@ def write_cache_json(ticker: str, relative_path: str, data: dict) -> Path:
 def read_cache_json(ticker: str, relative_path: str) -> dict | None:
     """Read nested JSON under .cache/{ticker}/{relative_path}."""
     path = cache_path(ticker, relative_path)
-    if not path.exists():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    legacy = LEGACY_CACHE_ROOT / ticker / relative_path
+    if legacy.exists():
+        return json.loads(legacy.read_text(encoding="utf-8"))
+    return None
 
 
 def read_task_output(ticker: str, task_name: str) -> dict | None:
     path = CACHE_ROOT / ticker / f"{task_name}.json"
-    if not path.exists():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    legacy = LEGACY_CACHE_ROOT / ticker / f"{task_name}.json"
+    if legacy.exists():
+        return json.loads(legacy.read_text(encoding="utf-8"))
+    return None
 
 
 def require_task_output(ticker: str, task_name: str) -> dict:
