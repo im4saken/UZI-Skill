@@ -337,46 +337,50 @@ https://www.yuncaijing.com/data/lhb/main.html      (云财经龙虎榜 · 游资
 
 ---
 
-## 5. 输出 Schema · 写回 agent_analysis.json
+## 5. 输出 Schema · sub-agent 先写 agent_outputs，再由 stage2 合并
 
-6 个定性维度的分析全部写入 `.cache/{ticker}/agent_analysis.json` 的
-`qualitative_deep_dive` 字段（v2.4 新增）。结构严格约束：
+6 个定性维度的 sub-agent **不要直接改主文件**。正确闭环是：
+
+1. A/B/C 三个 sub-agent 分别写：
+   - `.cache/{ticker}/agent_outputs/qual_macro_policy.json`
+   - `.cache/{ticker}/agent_outputs/qual_industry_events.json`
+   - `.cache/{ticker}/agent_outputs/qual_cost_transmission.json`
+2. 主 agent 如需补充跨维结论，可写入 `.cache/{ticker}/agent_analysis.json`
+   的 `dim_commentary` / `panel_insights`
+3. `stage2()` 自动把 `agent_outputs/qual_*.json` 合并进
+   `agent_analysis.json.qualitative_deep_dive`，再继续生成 `synthesis.json`
+
+单个 `qual_*.json` 文件的内容结构严格约束如下：
 
 ```json
 {
-  "agent_reviewed": true,
-  "dim_commentary": { "3_macro": "...", ... },
-  "panel_insights": "...",
-  "qualitative_deep_dive": {
-    "3_macro": {
-      "evidence": [
-        {
-          "source": "国务院.gov.cn | cninfo | xueqiu | websearch | browser | mx_api | annual_report",
-          "url": "https://www.gov.cn/zhengce/xxx.html",
-          "finding": "人民币兑美元 2026-04 中间价较年初贬值 2.1%；公司出口占营收 45%",
-          "retrieved_at": "2026-04-17"
-        }
-      ],
-      "associations": [
-        {
-          "link_to": "8_materials",
-          "chain_id": "链 1",
-          "causal_chain": "美联储加息 → 人民币贬值 → 公司进口铜原料成本 +3% → 毛利率 -1.2pp",
-          "estimated_impact": "影响 EPS 约 -0.08元"
-        }
-      ],
-      "conclusion": "宏观中性偏利空，主要拖累来自进口成本上行和出口议价弱化"
-    },
-    "7_industry": { ... },
-    "8_materials": { ... },
-    "9_futures": { ... },
-    "13_policy": { ... },
-    "15_events": { ... }
+  "3_macro": {
+    "evidence": [
+      {
+        "source": "国务院.gov.cn | cninfo | xueqiu | websearch | browser | mx_api | annual_report",
+        "url": "https://www.gov.cn/zhengce/xxx.html",
+        "finding": "人民币兑美元 2026-04 中间价较年初贬值 2.1%；公司出口占营收 45%",
+        "retrieved_at": "2026-04-17"
+      }
+    ],
+    "associations": [
+      {
+        "link_to": "8_materials",
+        "chain_id": "链 1",
+        "causal_chain": "美联储加息 → 人民币贬值 → 公司进口铜原料成本 +3% → 毛利率 -1.2pp",
+        "estimated_impact": "影响 EPS 约 -0.08元"
+      }
+    ],
+    "conclusion": "宏观中性偏利空，主要拖累来自进口成本上行和出口议价弱化"
   },
-  "great_divide_override": { ... },
-  "narrative_override": { ... }
+  "13_policy": { ... }
 }
 ```
+
+`stage2()` 合并完成后，主文件里的目标形态才会是：
+- `agent_analysis.json.qualitative_deep_dive[dim]`
+- `agent_analysis.json.dim_commentary[dim]`
+- 最终 `synthesis.json.dim_commentary[dim]`
 
 ### 字段约束
 
@@ -385,7 +389,7 @@ https://www.yuncaijing.com/data/lhb/main.html      (云财经龙虎榜 · 游资
 | `evidence[]` | list[obj] | 每维 ≥ 2 条，每条必有 `url`（允许 `"source": "unknown"` 但必须说明） |
 | `associations[]` | list[obj] | 6 维合计 ≥ 3 条（对应第 3 节 6 条链中至少 3 条） |
 | `conclusion` | string | 1-2 句，必须引用 evidence 和/或 associations，禁止空泛话术 |
-| `dim_commentary[key]` | string | 必须 cite `qualitative_deep_dive[key].evidence[*].url` 中至少一条 |
+| `dim_commentary[key]` | string | 由主 agent 写入 `agent_analysis.json`；必须 cite `qualitative_deep_dive[key].evidence[*].url` 中至少一条 |
 
 ### 质量红线（违反即视为未完成）
 - ❌ evidence 为空、或 url 全部空字符串

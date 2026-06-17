@@ -495,8 +495,9 @@ def stage1(ticker: str) -> dict:
     """Stage 1: 数据采集 + 建模 + 规则引擎骨架分。
 
     返回 {ticker, raw, dims, panel, features} 供 Claude agent 审查。
-    Claude 应该在 stage1 之后介入，用 sub-agent 逐组分析 51 评委，
-    覆盖 panel.json 中的 headline/reasoning/score，然后调 stage2 生成报告。
+    Claude 应该在 stage1 之后介入，优先消费 agent_inputs/*，
+    让 sub-agent 分别写入 agent_outputs/panel_*.json 和 agent_outputs/qual_*.json，
+    再补齐 agent_analysis.json，最后调用 stage2() 自动合并生成报告。
     """
     # v3.1 · stage1 前置段 (preflight + lite + name resolve + ETF guard) 已抽到 pipeline.preflight_helpers
     # 保持业务行为零差异 · 只是代码组织更清晰
@@ -645,9 +646,10 @@ def stage1(ticker: str) -> dict:
 def stage2(ticker: str) -> str:
     """Stage 2: 综合研判 + 报告组装。
 
-    在 Claude agent 审查/覆盖 panel.json + 写入 agent_analysis.json 之后调用。
+    在 Claude agent 写入 agent_outputs/* 与 agent_analysis.json 之后调用。
     读取 .cache 中的最新数据生成报告。
-    agent_analysis.json 的字段会合并进 synthesis，优先级高于脚本生成。
+    stage2() 会先自动合并 agent_outputs/*，再将 agent_analysis.json 的字段并入 synthesis，
+    agent 写入内容优先级高于脚本生成。
     返回报告路径。
     """
     from lib.cache import read_task_output

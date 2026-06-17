@@ -167,8 +167,9 @@
    - Agent E+G+H+I: 中式价投 + 量化 + 科技领袖/AI 卡位（14 人）→ 写 `agent_outputs/panel_china_quant.json`
    - Agent F: 游资（23 人）— 如果非 A 股直接全 skip → 写 `agent_outputs/panel_youzi.json`
 3. **每个 sub-agent 返回** 各自负责的投资者的 `{signal, score, headline, reasoning}`
-4. **主 Claude 可手动合并**，也可直接交给 `stage2()` 自动合并回 `panel.json`
-5. **写入** 更新后的 `panel.json`（自动或手动）
+4. **主 Claude 只需检查结果**，默认交给 `stage2()` 自动把 `agent_outputs/panel_*.json`
+   合并回 `panel.json`
+5. 如需补充整体判断，写入 `agent_analysis.json.panel_insights`，不要直接改 `synthesis.json`
 
 ## 快速模式 vs 深度模式
 

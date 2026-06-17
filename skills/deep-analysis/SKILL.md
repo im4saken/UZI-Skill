@@ -201,8 +201,9 @@ Payload 示例（agent 看到这个就知道该走 ETF 引导流程）:
    - `WebSearch`（精确到公司名 + 代码 + 行业关键词）
    - `Chrome/Playwright MCP`（打开 cninfo/xueqiu/gov.cn/证监会/工信部 抓原文）
    - `mx_api.MXClient`（若 `MX_APIKEY` 已设置）
-4. 合并三个 sub-agent 的输出，写入 `.cache/{ticker}/agent_analysis.json` 的
-   `qualitative_deep_dive` 字段（schema 见 task2.5 第 5 节）
+4. 三个 sub-agent 分别写入 `.cache/{ticker}/agent_outputs/qual_*.json`
+   （schema 见 task2.5 第 5 节）；随后由 `stage2()` 自动合并进
+   `.cache/{ticker}/agent_analysis.json.qualitative_deep_dive`
 5. **质量硬红线**：
    - 每维 `evidence` ≥ 2 条且每条必有具体 URL
    - 6 维合计 ≥ 3 条 `associations`（跨域因果链，对应 task2.5 第 3 节的 6 条里选 3）
@@ -703,7 +704,8 @@ from lib.fin_models import compute_dcf
 adjusted = compute_dcf(features, assumptions={"stage1_growth": 0.18, "beta": 1.3})
 ```
 
-将调整后的数字写入 `synthesis.json` 的 `adjusted_dcf` 字段供报告引用。
+将调整后的数字写入 `.cache/{ticker}/agent_analysis.json` 的 `narrative_override.adjusted_dcf`
+字段，随后由 `stage2()` 合并进 `synthesis.json` 供报告引用。
 
 ---
 
@@ -715,7 +717,9 @@ adjusted = compute_dcf(features, assumptions={"stage1_growth": 0.18, "beta": 1.3
 
 脚本的打分是"看数字给分"，但很多维度需要你**真正理解背后的故事**。
 
-**推荐做法**：对关键维度（财报 / 估值 / 护城河 / 行业），spawn 一个 sub-agent 去做 web search，搜索这家公司的最新深度分析文章：
+**推荐做法**：对关键维度（财报 / 估值 / 护城河 / 行业），优先读取
+`.cache/{ticker}/agent_inputs/executive_summary.json` 与相关 `qual_*.json` 简报；如简报不足，
+再让 sub-agent 做 web search，搜索这家公司的最新深度分析文章：
 
 ```
 Agent prompt:
@@ -727,7 +731,8 @@ Agent prompt:
 来源：雪球 / 东方财富 / 券商研报 / 财经媒体
 ```
 
-用搜索结果来写每个维度的定性评语——这样你的评语是**基于真实信息的判断**，不是对着数字编故事。
+用这些简报 + 搜索结果来写每个维度的定性评语——这样你的评语是**基于真实信息的判断**，
+不是把 `raw_data.json` 大段重新塞回上下文。
 
 **每个维度你都要写一条 1-2 句话的定性评语**，回答 5 个问题：
 
@@ -737,7 +742,8 @@ Agent prompt:
 4. **有哪些结构性问题？** (一次性损益 / 关联交易 / 存货堆积)
 5. **对论点影响大吗？** (这维度该加权还是降权)
 
-把你的评语写到 `synthesis.json` 的 `dim_commentary` 字段，格式：
+把你的评语写到 `.cache/{ticker}/agent_analysis.json` 的 `dim_commentary` 字段，
+后续由 `stage2()` 自动合并进 `synthesis.json`，格式：
 ```json
 "dim_commentary": {
   "1_financials": "ROE 从 2021 年的 18% 掉到 2024 年的 11.8%，主因是…（你的解读）",
@@ -835,7 +841,8 @@ Agent prompt:
 - `.cache/{ticker}/agent_outputs/panel_china_quant.json`
 - `.cache/{ticker}/agent_outputs/panel_youzi.json`
 
-随后由主 agent 手动检查，或直接让 `stage2()` 自动合并回 `panel.json`。
+随后由主 agent 检查结果，`stage2()` 会自动把 `agent_outputs/panel_*.json`
+合并回 `panel.json`。
 
 **如果 sub-agent 给的分和规则引擎差 > 30 分**，在 `panel_insights` 里标记为"分歧点"——这本身是有价值的信息（说明量化指标和主观判断不一致）。
 
@@ -923,7 +930,9 @@ python scripts/render_war_report.py {ticker}  # 战报 PNG
 
 ### 🧠 你的金句审查
 
-在调 assemble_report 之前，**检查一遍** `synthesis.json` 中这 5 个字段：
+在调 assemble_report 之前，**检查一遍** `synthesis.json` 中这 5 个字段。
+注意：这些字段应当来自 `agent_analysis.json` / `agent_outputs/*` 被 `stage2()` 合并后的结果，
+而不是手工直写 `synthesis.json`：
 
 | 字段 | 检查点 |
 |---|---|
