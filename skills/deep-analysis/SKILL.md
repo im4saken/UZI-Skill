@@ -466,6 +466,22 @@ stage2 会把这些字段标为"已确认拿不到"，HTML 报告显示划线 ch
 
 流水线分两段——**中间你必须介入做 agent 分析**：
 
+<HARD-GATE>
+在 `stage1()` 真正返回 `0_basic.data.name` 或 resolved ticker 之前：
+
+1. **不要擅自把 ticker 扩写成公司名**
+   - `ASTS` 不能先说成 “Astrotech”
+   - `NOK` 不能先说成别的同名缩写
+   - 只有当 `stage1()` / `raw_data.json` / `0_basic.data.name` 明确返回公司名后，才允许在对用户汇报时写“{name} ({ticker})”
+2. **凡是 `from run_real_test import stage1/stage2` 的 Python 调用，必须先 `cd <repo_root>/skills/deep-analysis/scripts`**
+   - 不允许在 skill 根目录、profile 根目录、任意临时 cwd 直接 import `run_real_test`
+   - 如果执行环境不确定 cwd，优先使用绝对路径 `cd /.../skills/deep-analysis/scripts && python -c "..."`
+3. 若当前只知道 ticker、不知道公司名，正确说法是：
+   - “现在开始分析 {ticker}，公司名以 stage1 实际解析结果为准”
+
+违反以上任一条，都属于执行错误，不要继续编故事或重试错误 cwd。
+</HARD-GATE>
+
 ### Stage 1 · 数据 + 骨架分（立即执行，不要犹豫）
 
 ```bash
