@@ -2,6 +2,8 @@
 
 > 本文档是 [SKILL.md · HARD-GATE-QUALITATIVE](../SKILL.md) 的详细操作手册。
 > 覆盖 6 个"纯爬虫搞不定"的维度，要求 agent 做高强度跨域联想 + 多 agent 并行抓取。
+> 在 128K file-driven 模式下，sub-agent **默认只读** `.cache/{ticker}/agent_inputs/qual_*.json`，
+> 不再把整份 `raw_data.json` 和网页材料直接塞回主上下文。
 
 ---
 
@@ -61,9 +63,9 @@ agent 串行覆盖 6 维（串行跑至少 3×更慢，且容易漏掉跨域思�
 主营业务：{main_business}
 子公司/投资版图：{subsidiaries_from_10K}
 
-原始数据位置：
-  - .cache/{ticker}/raw_data.json · dimensions["3_macro"]
-  - .cache/{ticker}/raw_data.json · dimensions["13_policy"]
+输入文件：
+  - `.cache/{ticker}/agent_inputs/executive_summary.json`
+  - `.cache/{ticker}/agent_inputs/qual_macro_policy.json`
 
 你必须回答的问题清单见 task2.5 第 2 节 Dim 3 和 Dim 13 的小节。
 
@@ -76,8 +78,9 @@ agent 串行覆盖 6 维（串行跑至少 3×更慢，且容易漏掉跨域思�
 3. 至少给出 2 条【宏观 ↔ 政策】交叉因果链（任选 task2.5 第 3 节的 6 条之一）
 4. 评估政策的受益者：是龙头（市场化分配）还是新玩家（补贴扶持）？本股处于什么位置？
 
-输出必须严格按照 task2.5 第 5 节 schema，写到 agent_analysis.json 的
-qualitative_deep_dive["3_macro"] 和 ["13_policy"] 字段。每条 finding 必须带 url 引用。
+输出必须严格按照 task2.5 第 5 节 schema，写到：
+  - `.cache/{ticker}/agent_outputs/qual_macro_policy.json`
+主 agent / stage2 再将其合并到 `agent_analysis.json.qualitative_deep_dive`。
 ```
 
 **Sub-agent B · Industry-Events Prompt**:
@@ -90,9 +93,9 @@ qualitative_deep_dive["3_macro"] 和 ["13_policy"] 字段。每条 finding 必�
 市值：{market_cap}
 最近 60 天公告数：{len(recent_news)}
 
-原始数据位置：
-  - .cache/{ticker}/raw_data.json · dimensions["7_industry"]
-  - .cache/{ticker}/raw_data.json · dimensions["15_events"]
+输入文件：
+  - `.cache/{ticker}/agent_inputs/executive_summary.json`
+  - `.cache/{ticker}/agent_inputs/qual_industry_events.json`
 
 你必须回答的问题清单见 task2.5 第 2 节 Dim 7 和 Dim 15 的小节。
 
@@ -107,7 +110,7 @@ qualitative_deep_dive["3_macro"] 和 ["13_policy"] 字段。每条 finding 必�
    收购方还是被收购方？）
 5. 若有子公司独立业务 → 做一次分部估值（SOTP），告诉我子公司如果独立上市值多少
 
-输出写入 qualitative_deep_dive["7_industry"] 和 ["15_events"]。
+输出写入 `.cache/{ticker}/agent_outputs/qual_industry_events.json`。
 ```
 
 **Sub-agent C · Cost-Transmission Prompt**:
@@ -119,9 +122,9 @@ qualitative_deep_dive["3_macro"] 和 ["13_policy"] 字段。每条 finding 必�
 行业：{industry}
 历史毛利率：{gross_margin_history}
 
-原始数据位置：
-  - .cache/{ticker}/raw_data.json · dimensions["8_materials"]
-  - .cache/{ticker}/raw_data.json · dimensions["9_futures"]
+输入文件：
+  - `.cache/{ticker}/agent_inputs/executive_summary.json`
+  - `.cache/{ticker}/agent_inputs/qual_cost_transmission.json`
 
 你必须回答的问题清单见 task2.5 第 2 节 Dim 8 和 Dim 9 的小节。
 
@@ -135,7 +138,7 @@ qualitative_deep_dive["3_macro"] 和 ["13_policy"] 字段。每条 finding 必�
 4. 从公司年报披露的"金融衍生品"段落判断套保敞口（买入 vs 卖出，名义本金）
 5. 至少验证 1 条【大宗 ↔ 期货】因果链
 
-输出写入 qualitative_deep_dive["8_materials"] 和 ["9_futures"]。
+输出写入 `.cache/{ticker}/agent_outputs/qual_cost_transmission.json`。
 ```
 
 ---

@@ -98,6 +98,32 @@ def write_task_output(ticker: str, task_name: str, data: dict) -> Path:
     return path
 
 
+def cache_path(ticker: str, relative_path: str) -> Path:
+    """Return a nested path under .cache/{ticker}/.
+
+    Supports new file-driven agent artifacts such as:
+      agent_inputs/executive_summary.json
+      agent_outputs/panel_value_growth.json
+    """
+    return CACHE_ROOT / ticker / relative_path
+
+
+def write_cache_json(ticker: str, relative_path: str, data: dict) -> Path:
+    """Write nested JSON under .cache/{ticker}/{relative_path}."""
+    path = cache_path(ticker, relative_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    return path
+
+
+def read_cache_json(ticker: str, relative_path: str) -> dict | None:
+    """Read nested JSON under .cache/{ticker}/{relative_path}."""
+    path = cache_path(ticker, relative_path)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def read_task_output(ticker: str, task_name: str) -> dict | None:
     path = CACHE_ROOT / ticker / f"{task_name}.json"
     if not path.exists():
