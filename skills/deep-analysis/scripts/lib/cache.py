@@ -30,7 +30,14 @@ TTL_STATIC      = 7 * 24 * 60 * 60   # 7 days — industry classification
 # Default TTL when caller doesn't specify
 CACHE_TTL_SECONDS = TTL_INTRADAY
 
-CACHE_ROOT = Path(".cache")
+# Cache must live at skill-root/.cache rather than cwd/.cache.
+# Hermes runs Python from `skills/deep-analysis/scripts/`, while later file reads
+# often target `skills/deep-analysis/.cache/...`. Using an absolute skill-root path
+# keeps stage1/stage2 and downstream readers aligned.
+_THIS_FILE = Path(__file__).resolve()
+SKILL_ROOT = _THIS_FILE.parents[2]
+LEGACY_CACHE_ROOT = Path(".cache")
+CACHE_ROOT = Path(os.environ.get("UZI_CACHE_ROOT", str(SKILL_ROOT / ".cache"))).resolve()
 NO_CACHE = os.environ.get("STOCK_NO_CACHE") == "1"
 
 
@@ -98,11 +105,43 @@ def write_task_output(ticker: str, task_name: str, data: dict) -> Path:
     return path
 
 
+def cache_path(ticker: str, relative_path: str) -> Path:
+    """Return a nested path under .cache/{ticker}/.
+
+    Supports new file-driven agent artifacts such as:
+      agent_inputs/executive_summary.json
+      agent_outputs/panel_value_growth.json
+    """
+    return CACHE_ROOT / ticker / relative_path
+
+
+def write_cache_json(ticker: str, relative_path: str, data: dict) -> Path:
+    """Write nested JSON under .cache/{ticker}/{relative_path}."""
+    path = cache_path(ticker, relative_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    return path
+
+
+def read_cache_json(ticker: str, relative_path: str) -> dict | None:
+    """Read nested JSON under .cache/{ticker}/{relative_path}."""
+    path = cache_path(ticker, relative_path)
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    legacy = LEGACY_CACHE_ROOT / ticker / relative_path
+    if legacy.exists():
+        return json.loads(legacy.read_text(encoding="utf-8"))
+    return None
+
+
 def read_task_output(ticker: str, task_name: str) -> dict | None:
     path = CACHE_ROOT / ticker / f"{task_name}.json"
-    if not path.exists():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    legacy = LEGACY_CACHE_ROOT / ticker / f"{task_name}.json"
+    if legacy.exists():
+        return json.loads(legacy.read_text(encoding="utf-8"))
+    return None
 
 
 def require_task_output(ticker: str, task_name: str) -> dict:

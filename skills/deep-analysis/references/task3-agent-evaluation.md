@@ -1,4 +1,4 @@
-# Task 3 · Agent-Driven 评审团 — 51 人每人都是一个决策过程
+# Task 3 · Agent-Driven 评审团 — 51 人每人都是一个决策过程 (128K file-driven)
 
 > **核心原则**：规则引擎是参考材料，不是最终判断。每个投资者的观点必须经过 Claude 的"角色扮演式思考"。
 
@@ -17,7 +17,7 @@
 ```
                     ┌─────────────────────────────┐
                     │  Task 3 · 主控 Claude        │
-                    │  读取 raw_data + features     │
+                    │  读取 agent_inputs/panel_*.json │
                     └────────┬────────────────────┘
                              │
               ┌──────────────┼──────────────────────┐
@@ -35,16 +35,16 @@
 ```
 
 **每个 sub-agent 的输入**：
-- raw_data.json（或关键摘要）
-- features dict（108 个标准化特征）
-- 规则引擎输出（每个人的 pass/fail rules + score — 作为参考）
-- investor_knowledge（持仓 / 市场 / 亲和度）
-- investor_personas（语言风格）
+- `agent_inputs/executive_summary.json`
+- 自己负责组的 `agent_inputs/panel_*.json`
+- 规则引擎骨架分（已内联在 `panel_*.json`）
+- `data_gaps` / A 股标志（已内联在 `panel_*.json`）
 
 **每个 sub-agent 的输出**：
 - 每个投资者一个 `{signal, score, headline, reasoning}`
 - headline 不是模板，是 agent 自己写的判断
 - reasoning 引用具体数据 + 该投资者的投资哲学
+- 输出写到 `agent_outputs/panel_*.json`
 
 ## 每组 Sub-Agent 的 Prompt 模板
 
@@ -53,11 +53,12 @@
 ```
 你要扮演以下 10 位投资大佬，逐一对 {stock_name} ({ticker}) 给出判断。
 
-规则引擎已经跑过了，结果如下（仅供参考，你可以覆盖）：
-{rule_engine_results_json}
+输入文件：
+- agent_inputs/executive_summary.json
+- agent_inputs/panel_value_growth.json
 
-真实信息：
-{investor_knowledge_json}
+规则引擎已经跑过，骨架分、pass/fail、headline、reasoning 都在 panel_value_growth.json 中，
+仅供参考，你可以覆盖。
 
 你的任务：
 - 对每个人，先想"如果我是他，我会怎么看这只票？"
@@ -98,8 +99,9 @@
 - 这只票在宏观格局里的位置
 - 风险/收益的不对称性
 - 市场情绪是否过度
-{macro_data}
-{sentiment_data}
+输入文件：
+- agent_inputs/executive_summary.json
+- agent_inputs/panel_macro_tech.json
 ```
 
 ### Group D+E · 技术趋势 + 中国价投 (10 人)
@@ -110,15 +112,16 @@
 - 均线排列（多头/空头）
 - MACD / 成交量
 - 距 60 日高点的百分比
-{kline_data}
-
 中国价投关心：
 - ROE 持续性
 - 护城河深度
 - 管理层是否"本分"（段永平用语）
 - 现金流质量
 - 估值是否在历史低位
-{financials_data}
+
+输入文件：
+- agent_inputs/executive_summary.json
+- agent_inputs/panel_china_quant.json
 ```
 
 ### Group F · 游资 (23 人)
@@ -131,9 +134,9 @@
 - 标的：市值 20-500 亿为主（具体看个人风格）
 如果这只票不是 A 股 → 全部 skip "不适合"
 
-龙虎榜数据：{lhb_data}
-近期涨停：{kline_data}
-板块热度：{sentiment_data}
+输入文件：
+- agent_inputs/executive_summary.json
+- agent_inputs/panel_youzi.json
 ```
 
 ### Group G · 量化 (3 人)
@@ -145,22 +148,28 @@
 - 质量因子（ROE 稳定性 + FCF）
 - 波动率
 - 成交量异常
-{technical_features}
+输入文件：
+- agent_inputs/executive_summary.json
+- agent_inputs/panel_china_quant.json（其中量化投资者已单独列出）
 ```
 
 ## Claude 在 Task 3 的完整流程
 
-1. **跑脚本**：`run_real_test.py` 里的 `generate_panel()` 产出规则引擎骨架分
-2. **读结果**：读 `.cache/{ticker}/panel.json`
-3. **Spawn 4-5 个 sub-agent**（用 Agent tool，可并行）：
-   - Agent A+B: 经典价值 + 成长（10 人）
-   - Agent C: 宏观对冲（5 人）
-   - Agent D+E: 技术 + 中国价投（10 人）
-   - Agent F: 游资（23 人）— 如果非 A 股直接全 skip
-   - Agent G: 量化（3 人）
-4. **每个 sub-agent 返回** 各自负责的投资者的 `{signal, score, headline, reasoning}`
-5. **主 Claude 合并**：把 sub-agent 的结果覆盖到 `panel.json` 的对应投资者
-6. **写入** 更新后的 `panel.json`
+1. **跑脚本**：`run_real_test.py` 里的 `generate_panel()` 产出规则引擎骨架分，随后 `build_agent_inputs.py` 自动生成：
+   - `.cache/{ticker}/agent_inputs/executive_summary.json`
+   - `.cache/{ticker}/agent_inputs/panel_value_growth.json`
+   - `.cache/{ticker}/agent_inputs/panel_macro_tech.json`
+   - `.cache/{ticker}/agent_inputs/panel_china_quant.json`
+   - `.cache/{ticker}/agent_inputs/panel_youzi.json`
+2. **Spawn 4 个 sub-agent**（用 Agent tool，可并行）：
+   - Agent A+B: 经典价值 + 成长（10 人）→ 写 `agent_outputs/panel_value_growth.json`
+   - Agent C+D: 宏观 + 技术（9 人）→ 写 `agent_outputs/panel_macro_tech.json`
+   - Agent E+G+H+I: 中式价投 + 量化 + 科技领袖/AI 卡位（14 人）→ 写 `agent_outputs/panel_china_quant.json`
+   - Agent F: 游资（23 人）— 如果非 A 股直接全 skip → 写 `agent_outputs/panel_youzi.json`
+3. **每个 sub-agent 返回** 各自负责的投资者的 `{signal, score, headline, reasoning}`
+4. **主 Claude 只需检查结果**，默认交给 `stage2()` 自动把 `agent_outputs/panel_*.json`
+   合并回 `panel.json`
+5. 如需补充整体判断，写入 `agent_analysis.json.panel_insights`，不要直接改 `synthesis.json`
 
 ## 快速模式 vs 深度模式
 
@@ -171,7 +180,8 @@
 ## 关键约束
 
 1. **Sub-agent 必须输出结构化 JSON**，不是自由文本
-2. **Sub-agent 可以覆盖规则引擎的分数**，但必须给出 `override_reason`
-3. **如果 sub-agent 和规则引擎分数差 > 30 分**，主 Claude 要在 synthesis 里标记为"分歧点"
-4. **游资组**：非 A 股直接全 skip，不需要 spawn agent
-5. **每个 headline 必须引用具体数字或事实**——禁止"基本面良好"式的废话
+2. **Sub-agent 只读对应的 `agent_inputs/panel_*.json`**，不要再把整个 `raw_data.json` 塞进上下文
+3. **Sub-agent 可以覆盖规则引擎的分数**，但必须给出 `override_reason`
+4. **如果 sub-agent 和规则引擎分数差 > 30 分**，主 Claude 要在 synthesis 里标记为"分歧点"
+5. **游资组**：非 A 股直接全 skip，不需要 spawn agent
+6. **每个 headline 必须引用具体数字或事实**——禁止"基本面良好"式的废话

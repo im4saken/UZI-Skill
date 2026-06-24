@@ -201,8 +201,9 @@ Payload 示例（agent 看到这个就知道该走 ETF 引导流程）:
    - `WebSearch`（精确到公司名 + 代码 + 行业关键词）
    - `Chrome/Playwright MCP`（打开 cninfo/xueqiu/gov.cn/证监会/工信部 抓原文）
    - `mx_api.MXClient`（若 `MX_APIKEY` 已设置）
-4. 合并三个 sub-agent 的输出，写入 `.cache/{ticker}/agent_analysis.json` 的
-   `qualitative_deep_dive` 字段（schema 见 task2.5 第 5 节）
+4. 三个 sub-agent 分别写入 `.cache/{ticker}/agent_outputs/qual_*.json`
+   （schema 见 task2.5 第 5 节）；随后由 `stage2()` 自动合并进
+   `.cache/{ticker}/agent_analysis.json.qualitative_deep_dive`
 5. **质量硬红线**：
    - 每维 `evidence` ≥ 2 条且每条必有具体 URL
    - 6 维合计 ≥ 3 条 `associations`（跨域因果链，对应 task2.5 第 3 节的 6 条里选 3）
@@ -408,6 +409,41 @@ v2.7 时这是软要求（agent 可能跳过）。v2.9 起是硬编码 block —
 质量靠 agent 自查。
 </HARD-GATE>
 
+### ⛔ HARD-GATE-CANONICAL-ARTIFACTS · 禁止手工改写主缓存（v3.9.1）
+
+<HARD-GATE>
+`raw_data.json` / `dimensions.json` / `panel.json` 是**脚本主产物**，不是 agent 可随意改写的草稿。
+
+**你只能手工写这两类文件**：
+1. `.cache/{ticker}/agent_outputs/*.json`
+2. `.cache/{ticker}/agent_analysis.json`
+
+**你绝不能手工写/覆盖这些主文件**：
+1. `.cache/{ticker}/raw_data.json`
+2. `.cache/{ticker}/dimensions.json`
+3. `.cache/{ticker}/panel.json`
+4. 任何写到用户 home 目录或其他旁路位置的假缓存，例如 `/Users/.../.cache/{ticker}/raw_data.json`
+
+尤其当出现以下场景时：
+- `yfinance` 未安装
+- 美股/港股核心 fetcher 缺依赖
+- stage1 覆盖率很低
+- 某些核心维度抓取失败
+
+**正确动作**：
+- 先如实报告：缺的是哪类依赖/哪几个核心维度
+- 提示用户修环境或安装依赖后重跑 `stage1()`
+- 如需继续做定性补充，只能补 `agent_outputs/*` 或 `agent_analysis.json`
+
+**错误动作**：
+- ❌ 用 web 搜索结果手工拼一个 `raw_data.json`
+- ❌ 把 ticker 擅自映射成另一个公司后写进 `0_basic.name`
+- ❌ 先写 `/Users/andy/.cache/...` 再 copy 回脚本 cache
+- ❌ 用 agent 伪造 `coverage_pct=85`、`market_cap`、`financials` 等主数据字段
+
+一句话：**主缓存只能由脚本生成；agent 只能写覆盖层，不能写底稿。**
+</HARD-GATE>
+
 ### ⛔ HARD-GATE-DATAGAPS · 数据缺口 agent 必须接管（v2.3）
 
 <HARD-GATE>
@@ -465,6 +501,22 @@ stage2 会把这些字段标为"已确认拿不到"，HTML 报告显示划线 ch
 
 流水线分两段——**中间你必须介入做 agent 分析**：
 
+<HARD-GATE>
+在 `stage1()` 真正返回 `0_basic.data.name` 或 resolved ticker 之前：
+
+1. **不要擅自把 ticker 扩写成公司名**
+   - `ASTS` 不能先说成 “Astrotech”
+   - `NOK` 不能先说成别的同名缩写
+   - 只有当 `stage1()` / `raw_data.json` / `0_basic.data.name` 明确返回公司名后，才允许在对用户汇报时写“{name} ({ticker})”
+2. **凡是 `from run_real_test import stage1/stage2` 的 Python 调用，必须先 `cd <repo_root>/skills/deep-analysis/scripts`**
+   - 不允许在 skill 根目录、profile 根目录、任意临时 cwd 直接 import `run_real_test`
+   - 如果执行环境不确定 cwd，优先使用绝对路径 `cd /.../skills/deep-analysis/scripts && python -c "..."`
+3. 若当前只知道 ticker、不知道公司名，正确说法是：
+   - “现在开始分析 {ticker}，公司名以 stage1 实际解析结果为准”
+
+违反以上任一条，都属于执行错误，不要继续编故事或重试错误 cwd。
+</HARD-GATE>
+
 ### Stage 1 · 数据 + 骨架分（立即执行，不要犹豫）
 
 ```bash
@@ -479,9 +531,9 @@ Stage 1 自动完成：Task 1（22 维采集）→ Task 1.5（机构建模）→
 
 <HARD-GATE>
 Do NOT run stage2() until ALL of the following are complete:
-1. You have READ .cache/{ticker}/panel.json and reviewed the 52 skeleton scores
+1. You have READ .cache/{ticker}/agent_inputs/executive_summary.json and the relevant panel_*.json / qual_*.json briefs
 2. You have SPAWNED sub-agents (or personally analyzed) each investor group
-3. You have MERGED agent results back into panel.json with updated headline/reasoning/score
+3. You have WRITTEN agent_outputs/panel_*.json and agent_outputs/qual_*.json (or manually merged them)
 4. You have WRITTEN agent_analysis.json with dim_commentary (≥5 dimensions) + panel_insights
 5. You have SET agent_reviewed: true in agent_analysis.json
 
@@ -490,10 +542,11 @@ genuine investment analysis. The whole point of this plugin is agent-driven judg
 </HARD-GATE>
 
 核心是：
-1. 读 `.cache/{ticker}/panel.json` 中 65 人的骨架分
-2. **Spawn 4 个并行 sub-agent 分组 role-play 投资者**——让他们真正"扮演"巴菲特/赵老哥思考
-3. 用 agent 的判断覆盖 panel.json 中的 headline/reasoning/score
-4. **写 `agent_analysis.json`** 到 `.cache/{ticker}/` — 这是闭环的关键！
+1. 读 `.cache/{ticker}/agent_inputs/executive_summary.json`
+2. 读 `.cache/{ticker}/agent_inputs/panel_*.json` / `qual_*.json`
+3. **Spawn 4 个并行 sub-agent 分组 role-play 投资者**——让他们真正"扮演"巴菲特/赵老哥思考
+4. 各组写入 `agent_outputs/panel_*.json` / `agent_outputs/qual_*.json`
+5. **写 `agent_analysis.json`** 到 `.cache/{ticker}/` — 这是闭环的关键！
 
 **agent_analysis.json 必填字段（缺字段 stage2 会 schema warning/error）：**
 
@@ -560,7 +613,8 @@ genuine investment analysis. The whole point of this plugin is agent-driven judg
 python -c "from run_real_test import stage2; stage2('<ticker>')"
 ```
 
-Stage 2 读取你更新后的 panel.json + agent_analysis.json，合并生成 HTML 报告。
+Stage 2 读取你更新后的 panel.json + agent_analysis.json，并自动合并
+`agent_outputs/panel_*.json` / `agent_outputs/qual_*.json`，再生成 HTML 报告。
 如果没有 agent_analysis.json，退化为纯脚本模式（会打印警告）。
 
 ### 快速模式（跳过 agent 介入）
@@ -701,7 +755,8 @@ from lib.fin_models import compute_dcf
 adjusted = compute_dcf(features, assumptions={"stage1_growth": 0.18, "beta": 1.3})
 ```
 
-将调整后的数字写入 `synthesis.json` 的 `adjusted_dcf` 字段供报告引用。
+将调整后的数字写入 `.cache/{ticker}/agent_analysis.json` 的 `narrative_override.adjusted_dcf`
+字段，随后由 `stage2()` 合并进 `synthesis.json` 供报告引用。
 
 ---
 
@@ -713,7 +768,9 @@ adjusted = compute_dcf(features, assumptions={"stage1_growth": 0.18, "beta": 1.3
 
 脚本的打分是"看数字给分"，但很多维度需要你**真正理解背后的故事**。
 
-**推荐做法**：对关键维度（财报 / 估值 / 护城河 / 行业），spawn 一个 sub-agent 去做 web search，搜索这家公司的最新深度分析文章：
+**推荐做法**：对关键维度（财报 / 估值 / 护城河 / 行业），优先读取
+`.cache/{ticker}/agent_inputs/executive_summary.json` 与相关 `qual_*.json` 简报；如简报不足，
+再让 sub-agent 做 web search，搜索这家公司的最新深度分析文章：
 
 ```
 Agent prompt:
@@ -725,7 +782,8 @@ Agent prompt:
 来源：雪球 / 东方财富 / 券商研报 / 财经媒体
 ```
 
-用搜索结果来写每个维度的定性评语——这样你的评语是**基于真实信息的判断**，不是对着数字编故事。
+用这些简报 + 搜索结果来写每个维度的定性评语——这样你的评语是**基于真实信息的判断**，
+不是把 `raw_data.json` 大段重新塞回上下文。
 
 **每个维度你都要写一条 1-2 句话的定性评语**，回答 5 个问题：
 
@@ -735,7 +793,8 @@ Agent prompt:
 4. **有哪些结构性问题？** (一次性损益 / 关联交易 / 存货堆积)
 5. **对论点影响大吗？** (这维度该加权还是降权)
 
-把你的评语写到 `synthesis.json` 的 `dim_commentary` 字段，格式：
+把你的评语写到 `.cache/{ticker}/agent_analysis.json` 的 `dim_commentary` 字段，
+后续由 `stage2()` 自动合并进 `synthesis.json`，格式：
 ```json
 "dim_commentary": {
   "1_financials": "ROE 从 2021 年的 18% 掉到 2024 年的 11.8%，主因是…（你的解读）",
@@ -756,7 +815,18 @@ Agent prompt:
 
 ### Step 3.1 · 跑规则引擎获取骨架分
 
-`run_real_test.py` 已经自动完成了三层评估（`investor_knowledge.py` 现实检验 → `investor_criteria.py` 规则打分 → 合成）。读 `.cache/{ticker}/panel.json` 拿到结果。
+`run_real_test.py` 已经自动完成了三层评估（`investor_knowledge.py` 现实检验 → `investor_criteria.py` 规则打分 → 合成）。
+在 128K file-driven 模式下，stage1 结束后还会自动生成：
+
+- `.cache/{ticker}/agent_inputs/executive_summary.json`
+- `.cache/{ticker}/agent_inputs/panel_value_growth.json`
+- `.cache/{ticker}/agent_inputs/panel_macro_tech.json`
+- `.cache/{ticker}/agent_inputs/panel_china_quant.json`
+- `.cache/{ticker}/agent_inputs/panel_youzi.json`
+- `.cache/{ticker}/agent_inputs/qual_macro_policy.json`
+- `.cache/{ticker}/agent_inputs/qual_industry_events.json`
+- `.cache/{ticker}/agent_inputs/qual_cost_transmission.json`
+- `.cache/{ticker}/agent_inputs/task4_synthesis_brief.json`
 
 ### Step 3.2 · Spawn 并行 Sub-Agent（核心步骤）
 
@@ -767,14 +837,11 @@ Agent prompt:
 ```
 你要扮演 10 位投资大佬，逐一对 {stock_name} ({ticker}) 给出判断。
 
-公司数据摘要：
-{raw_data 的关键数据：价格/PE/ROE/行业/护城河/FCF/增速/估值分位...}
+输入文件：
+- `.cache/{ticker}/agent_inputs/executive_summary.json`
+- `.cache/{ticker}/agent_inputs/panel_value_growth.json`
 
-规则引擎参考分（仅供参考，你可以覆盖）：
-{每人的 rule_score + pass_rules + fail_rules}
-
-真实世界信息：
-{investor_knowledge 里的持仓/行业亲和度}
+规则引擎参考分（仅供参考，你可以覆盖）已内联在 `panel_value_growth.json`。
 
 要求：
 1. 对每个人，先想"如果我是他，看到这些数据，我会怎么想？"
@@ -790,7 +857,9 @@ Agent prompt:
 宏观派关心：利率周期/汇率/地缘/大宗商品 对这只票的影响
 技术派关心：Stage/均线排列/MACD/成交量/距高点距离
 
-数据：{macro_dim + kline_dim 摘要}
+输入文件：
+- `.cache/{ticker}/agent_inputs/executive_summary.json`
+- `.cache/{ticker}/agent_inputs/panel_macro_tech.json`
 ```
 
 **Agent 3 · 中国价投 + 量化**（段永平/张坤/朱少醒/谢治宇/冯柳/邓晓峰 + 西蒙斯/索普/肖 · 9 人）
@@ -799,8 +868,9 @@ Agent prompt:
 中国价投关心：好生意+好价格+好管理，长期持有
 量化关心：因子暴露（动量/价值/质量/波动率）
 
-数据：{financials + valuation + moat 摘要}
-真实持仓：{段永平持有苹果/茅台/腾讯，张坤重仓白酒...}
+输入文件：
+- `.cache/{ticker}/agent_inputs/executive_summary.json`
+- `.cache/{ticker}/agent_inputs/panel_china_quant.json`
 ```
 
 **Agent 4 · 游资组**（23 人 — 只有 A 股才需要 spawn）
@@ -808,17 +878,22 @@ Agent prompt:
 ```
 如果这只票不是 A 股 → 直接输出 23 人全部 "skip: 不看{market}市场"
 
-如果是 A 股：
-- 市值是否在各人射程内？（赵老哥 > 20 亿、章盟主 > 200 亿...）
-- 龙虎榜数据：{lhb_dim}
-- 最近涨停板：{kline 最近连板情况}
-- 板块热度：{sentiment}
-- 每人风格不同：赵老哥打板/章盟主趋势/炒股养家情绪/佛山无影脚快进快出
+输入文件：
+- `.cache/{ticker}/agent_inputs/executive_summary.json`
+- `.cache/{ticker}/agent_inputs/panel_youzi.json`
 ```
 
 ### Step 3.3 · 合并 Sub-Agent 结果
 
-4 个 agent 返回后，你逐一把他们的 `{signal, score, headline, reasoning}` 覆盖到 `panel.json` 对应的投资者上。
+4 个 agent 返回后，写入：
+
+- `.cache/{ticker}/agent_outputs/panel_value_growth.json`
+- `.cache/{ticker}/agent_outputs/panel_macro_tech.json`
+- `.cache/{ticker}/agent_outputs/panel_china_quant.json`
+- `.cache/{ticker}/agent_outputs/panel_youzi.json`
+
+随后由主 agent 检查结果，`stage2()` 会自动把 `agent_outputs/panel_*.json`
+合并回 `panel.json`。
 
 **如果 sub-agent 给的分和规则引擎差 > 30 分**，在 `panel_insights` 里标记为"分歧点"——这本身是有价值的信息（说明量化指标和主观判断不一致）。
 
@@ -830,7 +905,8 @@ Agent prompt:
 3. **异常值**：有没有谁的分数明显不合理？（比如巴菲特给苹果 0 分 — 这在新架构下不应该发生了）
 4. **Skip 统计**：多少人 skip 了？如果分析美股，23 个游资全 skip 是正常的
 
-将观察写进 `synthesis.json` 的 `panel_insights`。
+将观察写进 `agent_analysis.json` 的 `panel_insights`。如有需要，也可参考
+`.cache/{ticker}/agent_inputs/task4_synthesis_brief.json` 来做 Task 4 收束。
 
 ---
 
@@ -905,7 +981,9 @@ python scripts/render_war_report.py {ticker}  # 战报 PNG
 
 ### 🧠 你的金句审查
 
-在调 assemble_report 之前，**检查一遍** `synthesis.json` 中这 5 个字段：
+在调 assemble_report 之前，**检查一遍** `synthesis.json` 中这 5 个字段。
+注意：这些字段应当来自 `agent_analysis.json` / `agent_outputs/*` 被 `stage2()` 合并后的结果，
+而不是手工直写 `synthesis.json`：
 
 | 字段 | 检查点 |
 |---|---|
@@ -926,6 +1004,12 @@ python scripts/render_war_report.py {ticker}  # 战报 PNG
 - Great Divide punchline 不为空
 - 杀猪盘等级显示
 - 文件大小 > 400 KB（低于说明有大段缺失）
+
+**停机规则（防止 agent 卡死反复审查 HTML）**：
+- 一旦 `stage2()` 成功返回且 `full-report-standalone.html` 大于 400 KB，视为装配完成
+- 此后**不要反复读取/复查 HTML 内容**
+- 最终对用户的总结应基于 `synthesis.json`、`one-liner.txt` 和产物路径，而不是继续逐段审 HTML
+- 如果文件小于 400 KB，直接视为失败，修复后重跑；不要进入“反复看看 report content”循环
 
 ---
 
@@ -1005,7 +1089,9 @@ echo "${CODEX:-${OPENAI_API_KEY:+codex_via_openai}}"
 |---|---|---|---|
 | `.cache/{ticker}/raw_data.json` | Task 1/1.5 脚本 | Task 2-5 + 你 | 数据源 |
 | `.cache/{ticker}/dimensions.json` | Task 2 脚本 | Task 4-5 | 评分 |
-| `.cache/{ticker}/panel.json` | Task 3 规则引擎 → **你覆盖** | stage2 | 骨架→真实判断 |
+| `.cache/{ticker}/panel.json` | Task 3 规则引擎 → **你覆盖 / stage2 自动合并** | stage2 | 骨架→真实判断 |
+| `.cache/{ticker}/agent_inputs/*` | stage1 自动生成 | **你 / sub-agents** | 最小输入简报 |
+| `.cache/{ticker}/agent_outputs/*` | **🧠 Sub-agents** | stage2 自动合并 | 文件驱动中间产物 |
 | **`.cache/{ticker}/agent_analysis.json`** | **🧠 你写** | **stage2 自动合并** | **闭环关键** |
 | `.cache/{ticker}/synthesis.json` | stage2 (合并 agent_analysis) | Task 5 | 最终研判 |
 | `reports/{ticker}_{date}/full-report.html` | Task 5 脚本 | 用户 | 报告 |

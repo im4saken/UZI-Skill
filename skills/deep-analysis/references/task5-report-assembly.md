@@ -144,9 +144,17 @@ font-family: 'JetBrains Mono', ui-monospace, monospace;
 - [ ] punchline 不在禁止清单里
 - [ ] 风险清单至少 1 条带具体数字
 - [ ] dashboard.core_conclusion 不超过 60 字
+- [ ] `full-report-standalone.html` 文件大小 > 400 KB
+
+## 停机规则
+
+- `stage2()` 成功返回且 `full-report-standalone.html > 400 KB` 后，立即停止继续审 HTML 正文
+- 汇报用户时只引用 `synthesis.json`、`one-liner.txt` 和产物路径
+- 若文件 ≤ 400 KB，判定为报告缺页/只生成骨架，直接回到装配步骤修复并重跑
+- 不允许进入“我再看看 report content”式的循环自检
 
 完成后向用户汇报：
-```
+``` 
 ✅ 报告已生成
 📄 完整报告: reports/{ticker}_{date}/full-report.html
 🖼️  社交战报: reports/{ticker}_{date}/share-card.png

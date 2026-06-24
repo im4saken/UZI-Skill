@@ -25,6 +25,9 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
+# 完整 standalone 报告通常远大于 400KB；低于该阈值基本可视为只生成了骨架或大段缺失。
+MIN_STANDALONE_REPORT_BYTES = 400 * 1024
+
 from lib.cache import write_task_output  # noqa: E402
 from lib.investor_db import INVESTORS  # noqa: E402
 from lib.investor_personas import get_comment as _persona_comment  # noqa: E402
@@ -495,8 +498,9 @@ def stage1(ticker: str) -> dict:
     """Stage 1: 数据采集 + 建模 + 规则引擎骨架分。
 
     返回 {ticker, raw, dims, panel, features} 供 Claude agent 审查。
-    Claude 应该在 stage1 之后介入，用 sub-agent 逐组分析 51 评委，
-    覆盖 panel.json 中的 headline/reasoning/score，然后调 stage2 生成报告。
+    Claude 应该在 stage1 之后介入，优先消费 agent_inputs/*，
+    让 sub-agent 分别写入 agent_outputs/panel_*.json 和 agent_outputs/qual_*.json，
+    再补齐 agent_analysis.json，最后调用 stage2() 自动合并生成报告。
     """
     # v3.1 · stage1 前置段 (preflight + lite + name resolve + ETF guard) 已抽到 pipeline.preflight_helpers
     # 保持业务行为零差异 · 只是代码组织更清晰
@@ -602,6 +606,18 @@ def stage1(ticker: str) -> dict:
     active_n = len(panel["investors"]) - skip_n
     print(f"  参与 {active_n} · 跳过 {skip_n} · 看多 {sd['bullish']} · 中性 {sd['neutral']} · 看空 {sd['bearish']}")
 
+    print("\n🗂 Task 3.5 · 生成 agent 输入简报")
+    try:
+        from build_agent_inputs import build_agent_inputs
+        created = build_agent_inputs(ti.full, raw=raw, dims=dims, panel=panel)
+        print(f"  已生成 {len(created)} 个文件驱动简报")
+        print(f"  核心摘要: .cache/{ti.full}/agent_inputs/executive_summary.json")
+        print(f"  评委分组: .cache/{ti.full}/agent_inputs/panel_*.json")
+        print(f"  定性分组: .cache/{ti.full}/agent_inputs/qual_*.json")
+        print(f"  综合简报: .cache/{ti.full}/agent_inputs/task4_synthesis_brief.json")
+    except Exception as _brief_e:
+        print(f"  ⚠️ 生成 agent_inputs 失败: {type(_brief_e).__name__}: {str(_brief_e)[:160]}")
+
     features = extract_features(raw, raw.get("dimensions", {}))
 
     print(f"\n{'━' * 50}")
@@ -609,15 +625,16 @@ def stage1(ticker: str) -> dict:
     print(f"   数据: .cache/{ti.full}/raw_data.json")
     print(f"   评分: .cache/{ti.full}/dimensions.json")
     print(f"   评委: .cache/{ti.full}/panel.json")
+    print(f"   简报: .cache/{ti.full}/agent_inputs/")
     print(f"")
     print(f"   ⏸️  此时 Claude agent 应介入：")
-    print(f"      1. 读取 panel.json 中 51 人的骨架分")
-    print(f"      2. Spawn 4 个 sub-agent 分组 role-play 投资者")
-    print(f"      3. 用 agent 判断覆盖 panel.json 中的 headline/reasoning/score")
+    print(f"      1. 读取 agent_inputs/executive_summary.json 和各组 panel_*.json")
+    print(f"      2. Spawn 4 个 sub-agent 分组 role-play 投资者 → 写 agent_outputs/panel_*.json")
+    print(f"      3. Spawn 3 个 sub-agent 深挖 6 个定性维度 → 写 agent_outputs/qual_*.json")
     print(f"      4. 写 agent_analysis.json 到 .cache/{ti.full}/")
     print(f"         包含: dim_commentary, panel_insights, great_divide_override, narrative_override")
     print(f"         设置 agent_reviewed: true")
-    print(f"      5. 然后调用 stage2('{ti.full}') 生成最终报告")
+    print(f"      5. 然后调用 stage2('{ti.full}') 自动合并 agent_outputs 并生成最终报告")
     print(f"{'━' * 50}")
 
     return {
@@ -632,9 +649,10 @@ def stage1(ticker: str) -> dict:
 def stage2(ticker: str) -> str:
     """Stage 2: 综合研判 + 报告组装。
 
-    在 Claude agent 审查/覆盖 panel.json + 写入 agent_analysis.json 之后调用。
+    在 Claude agent 写入 agent_outputs/* 与 agent_analysis.json 之后调用。
     读取 .cache 中的最新数据生成报告。
-    agent_analysis.json 的字段会合并进 synthesis，优先级高于脚本生成。
+    stage2() 会先自动合并 agent_outputs/*，再将 agent_analysis.json 的字段并入 synthesis，
+    agent 写入内容优先级高于脚本生成。
     返回报告路径。
     """
     from lib.cache import read_task_output
@@ -649,6 +667,22 @@ def stage2(ticker: str) -> str:
 
     # v2.2 · Read agent_analysis.json — the agent's written-back analysis
     agent_analysis = read_task_output(ti.full, "agent_analysis")
+
+    # v4.0 · 文件驱动 agent 中间产物：优先自动合并 agent_outputs/*
+    try:
+        from build_agent_inputs import merge_agent_outputs
+        panel, agent_analysis = merge_agent_outputs(ti.full, panel=panel, agent_analysis=agent_analysis)
+        merged_meta = (agent_analysis or {}).get("_merged_agent_outputs") or {}
+        merged_panel_files = merged_meta.get("panel_files") or []
+        merged_qual_files = merged_meta.get("qual_files") or []
+        if merged_panel_files or merged_qual_files:
+            print("\n🗂 已自动合并文件驱动 agent 输出")
+            if merged_panel_files:
+                print(f"   panel outputs: {', '.join(merged_panel_files)}")
+            if merged_qual_files:
+                print(f"   qualitative outputs: {', '.join(merged_qual_files)}")
+    except Exception as _merge_e:
+        print(f"\n⚠️  agent_outputs 自动合并失败: {type(_merge_e).__name__}: {str(_merge_e)[:160]}")
 
     # v2.6 · 校验 agent_analysis schema（特别针对非 Claude 模型的输出）
     if agent_analysis:
@@ -698,6 +732,10 @@ def stage2(ticker: str) -> str:
             print(f"   qualitative_deep_dive: ✓ 6 维全覆盖 · evidence {total_evidence} 条 · associations {total_assoc} 条")
             if total_assoc < 3:
                 print(f"   ⚠️  跨域因果链仅 {total_assoc} 条，task2.5 要求 ≥ 3 条")
+    elif agent_analysis:
+        print(f"\n⚠️  检测到部分 agent 文件产物，但 agent_reviewed != true")
+        print(f"   stage2 将继续消费已落盘的 agent_outputs / agent_analysis 字段")
+        print(f"   但建议主 agent 最终补齐 agent_analysis.json 并设置 agent_reviewed: true")
     else:
         print(f"\n⚠️  未检测到 agent_analysis.json · 将使用脚本骨架生成 synthesis")
         print(f"   提示: Claude agent 应在 stage1 之后写入 .cache/{ti.full}/agent_analysis.json")
@@ -760,8 +798,11 @@ def stage2(ticker: str) -> str:
         print(f"  ⚠️ 战报跳过: {e}")
 
     standalone_path = Path(standalone).resolve()
-    assert standalone_path.exists() and standalone_path.stat().st_size > 10000, \
-        f"Standalone file missing or too small: {standalone_path}"
+    assert standalone_path.exists(), f"Standalone file missing: {standalone_path}"
+    assert standalone_path.stat().st_size >= MIN_STANDALONE_REPORT_BYTES, (
+        f"Standalone file too small: {standalone_path} "
+        f"({standalone_path.stat().st_size} bytes < {MIN_STANDALONE_REPORT_BYTES})"
+    )
 
     print(f"\n✅ Stage 2 完成!")
     print(f"   报告: {standalone_path}")
